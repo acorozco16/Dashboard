@@ -1,6 +1,9 @@
-import React, { useState, useMemo } from 'react';
+'use client'
+
+import React, { useState, useMemo, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, ComposedChart, Area } from 'recharts';
 
+// Utility functions
 const formatCurrency = (val) => {
   if (val === null || val === undefined) return '-';
   const absVal = Math.abs(val);
@@ -14,819 +17,1230 @@ const formatNumber = (val) => {
   return val.toLocaleString();
 };
 
-const sites = {
-  chicago: { name: 'Chicago', sqft: 21000, bins: 10000, ports: 9, status: 'live' },
-  dallas: { name: 'Dallas', sqft: 28760, bins: 13000, ports: 13, status: 'in_progress' },
-  newjersey: { name: 'New Jersey', sqft: 24750, bins: 13000, ports: 13, status: 'planning' },
-  losangeles: { name: 'Los Angeles', sqft: 34468, bins: 13000, ports: 13, status: 'planning' },
-  phoenix: { name: 'Phoenix', sqft: 29099, bins: 13000, ports: 13, status: 'planning' }
+const getDaysUntil = (dateString) => {
+  if (!dateString) return null;
+  const target = new Date(dateString);
+  const today = new Date();
+  const diff = Math.ceil((target - today) / (1000 * 60 * 60 * 24));
+  return diff;
 };
 
-const defaultCapex = {
-  chicago: { phase1: 573558, phase2: 703316 },
-  dallas: { phase1: 635547, phase2: 887246 },
-  newjersey: { phase1: 691481, phase2: 887246 },
-  losangeles: { phase1: 776700, phase2: 887246 },
-  phoenix: { phase1: 651040, phase2: 887246 }
+const getMonthKey = (date) => {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
-const defaultOpex = {
-  chicago: { rent: 30510, pio: 19253, other: 2318 },
-  dallas: { rent: 33949, pio: 29673, other: 2318 },
-  newjersey: { rent: 52594, pio: 29673, other: 2318 },
-  losangeles: { rent: 55149, pio: 29673, other: 2318 },
-  phoenix: { rent: 39113, pio: 29673, other: 2318 }
+const getMonthLabel = (monthKey) => {
+  const [year, month] = monthKey.split('-');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[parseInt(month) - 1]} ${year}`;
 };
+
+const StatusBadge = ({ status }) => {
+  const styles = {
+    live: 'bg-green-100 text-green-700 border-green-300',
+    launching: 'bg-blue-100 text-blue-700 border-blue-300',
+    planning: 'bg-gray-100 text-gray-600 border-gray-300'
+  };
+  const labels = { live: 'Live', launching: 'Launching', planning: 'Planning' };
+  const icons = { live: '●', launching: '◐', planning: '○' };
+
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${styles[status]}`}>
+      <span>{icons[status]}</span> {labels[status]}
+    </span>
+  );
+};
+
+// Collapsible Section Component
+const CollapsibleSection = ({ title, children, defaultOpen = false, rightContent }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <span className={`transform transition-transform text-gray-400 text-sm ${isOpen ? 'rotate-90' : ''}`}>▶</span>
+          <h2 className="text-lg font-semibold">{title}</h2>
+        </div>
+        {rightContent && <div className="text-right">{rightContent}</div>}
+      </button>
+      {isOpen && <div className="px-6 pb-6 border-t pt-4">{children}</div>}
+    </div>
+  );
+};
+
+// Create default monthly snapshot
+const createMonthlySnapshot = (baseConfig = {}) => ({
+  labor: baseConfig.labor || {
+    teamLeads: 1,
+    teamLeadCost: 5291,
+    associates: 3,
+    associateCost: 3466
+  },
+  opex: baseConfig.opex || {
+    rent: 30000,
+    internet: 290,
+    trash: 250,
+    security: 60,
+    pio: 20000,
+    energy: 550,
+    gas: 400,
+    hvac: 70,
+    repairs: 200,
+    officeCleaning: 200,
+    drinksSnacks: 150,
+    cleaningSupplies: 50,
+    toiletries: 40,
+    officeSupplies: 30,
+    equipmentReplacement: 500
+  },
+  customOpex: baseConfig.customOpex || [],
+  customers: baseConfig.customers || { anchor: 0, midTier: 0, small: 0 },
+  actuals: baseConfig.actuals || {
+    orders: 0,
+    revenue: 0,
+    storageUtil: 0
+  },
+  isLocked: false
+});
+
+// Default warehouse template
+const createDefaultWarehouse = (name = 'New Warehouse') => ({
+  id: Date.now().toString(),
+  name,
+  location: '',
+  status: 'planning',
+  goLiveDate: '',
+  sqft: 25000,
+  bins: 10000,
+  ports: 9,
+  cuFtPerBin: 2.68,
+  ordersPerPortPerHour: 125,
+  capex: {
+    securityDeposit: 100000,
+    firePreSurvey: 1200,
+    pio50_1: 250000,
+    install50_1: 110000,
+    firePermitting: 30000,
+    electricalDesign: 30000,
+    electricalPermit: 40000,
+    seismic: 0,
+    pio50_2: 250000,
+    install50_2: 110000,
+    pioShipping: 60000,
+    pioTariffs: 0,
+    autobagger: 200000,
+    conveyors: 18510,
+    warehouseEquipment: 26122,
+    airCompression: 12714,
+    networkGear: 4000,
+    crateRemoval: 2500,
+    binInsertHires: 4700,
+    furniture: 2500,
+    forkliftUnload: 1750,
+    securityInstall: 1950
+  },
+  customCapex: [],
+  capexPaid: {},
+  monthlySnapshots: {}
+});
+
+// Initial warehouses
+const initialWarehouses = [
+  {
+    ...createDefaultWarehouse('Chicago'),
+    id: 'chicago',
+    location: 'Chicago, IL',
+    status: 'live',
+    goLiveDate: '2026-01-01',
+    sqft: 21000,
+    bins: 10000,
+    ports: 9,
+    capex: {
+      securityDeposit: 76857,
+      firePreSurvey: 0,
+      pio50_1: 247500,
+      install50_1: 109370,
+      firePermitting: 26500,
+      electricalDesign: 32850,
+      electricalPermit: 80481,
+      seismic: 0,
+      pio50_2: 247500,
+      install50_2: 109370,
+      pioShipping: 60000,
+      pioTariffs: 0,
+      autobagger: 200000,
+      conveyors: 18510,
+      warehouseEquipment: 26122,
+      airCompression: 12714,
+      networkGear: 3700,
+      crateRemoval: 2500,
+      binInsertHires: 4700,
+      furniture: 2500,
+      forkliftUnload: 1750,
+      securityInstall: 1950,
+      electricalPermitAddl: 12000
+    },
+    customCapex: [],
+    capexPaid: { all: true },
+    monthlySnapshots: {
+      '2026-01': createMonthlySnapshot({
+        labor: { teamLeads: 1, teamLeadCost: 5291, associates: 3, associateCost: 3466 },
+        opex: { rent: 30510, internet: 290, trash: 250, security: 60, pio: 19253, energy: 550, gas: 418, hvac: 70, repairs: 200, officeCleaning: 200, drinksSnacks: 150, cleaningSupplies: 50, toiletries: 40, officeSupplies: 30, equipmentReplacement: 500 },
+        customOpex: [],
+        customers: { anchor: 0, midTier: 0, small: 0 },
+        actuals: { orders: 0, revenue: 0, storageUtil: 0 }
+      })
+    }
+  },
+  {
+    ...createDefaultWarehouse('Dallas'),
+    id: 'dallas',
+    location: 'Dallas, TX',
+    status: 'launching',
+    goLiveDate: '2026-05-01',
+    sqft: 28760,
+    bins: 13000,
+    ports: 13,
+    capex: {
+      securityDeposit: 101846,
+      firePreSurvey: 1200,
+      pio50_1: 300900,
+      install50_1: 131600,
+      firePermitting: 30000,
+      electricalDesign: 30000,
+      electricalPermit: 40000,
+      seismic: 0,
+      pio50_2: 300900,
+      install50_2: 131600,
+      pioShipping: 60000,
+      pioTariffs: 120000,
+      autobagger: 200000,
+      conveyors: 18510,
+      warehouseEquipment: 26122,
+      airCompression: 12714,
+      networkGear: 4000,
+      crateRemoval: 2500,
+      binInsertHires: 4700,
+      furniture: 2500,
+      forkliftUnload: 1750,
+      securityInstall: 1950
+    },
+    customCapex: [],
+    capexPaid: { pio50_1: true },
+    monthlySnapshots: {}
+  }
+];
 
 export default function WarehouseDashboard() {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [warehouses, setWarehouses] = useState(initialWarehouses);
+  const [selectedView, setSelectedView] = useState('overview');
+  const [selectedMonth, setSelectedMonth] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showAddMonthModal, setShowAddMonthModal] = useState(false);
+  const [newWarehouse, setNewWarehouse] = useState(createDefaultWarehouse());
 
-  // Inputs
-  const [rateCard, setRateCard] = useState({
-    orderFee: 0.50,
-    pickFee: 0.10,
-    storagePerCuFtWeek: 0.39,
-    returnFee: 3.00,
-    inboundFee: 3.50
+  const [globalSettings, setGlobalSettings] = useState({
+    cash: { onHand: 3000000, vcFunding: 5000000 },
+    rateCard: {
+      orderFee: 0.50,
+      pickFee: 0.10,
+      storagePerCuFtWeek: 0.39,
+      returnFee: 3.00
+    },
+    assumptions: {
+      avgItemsPerOrder: 2,
+      returnRate: 0.05,
+      variableCostPerOrder: 0.44
+    }
   });
 
-  const [assumptions, setAssumptions] = useState({
-    avgItemsPerOrder: 2,
-    returnRate: 0.05,
-    peakSurgeMultiplier: 2.0,
-    variableCostPerOrder: 0.44,
-    cuFtPerBin: 2.68,
-    ordersPerPortPerHour: 125,
-    teamLeadSalary: 5291,
-    associateSalary: 3466
-  });
+  // Load from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('warehouseDashboardV5');
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        if (data.warehouses) setWarehouses(data.warehouses);
+        if (data.globalSettings) setGlobalSettings(data.globalSettings);
+      } catch (e) {
+        console.error('Failed to load saved data');
+      }
+    }
+  }, []);
 
-  const [cash, setCash] = useState({
-    onHand: 3000000,
-    vcFunding: 5000000
-  });
+  // Save to localStorage
+  useEffect(() => {
+    localStorage.setItem('warehouseDashboardV5', JSON.stringify({ warehouses, globalSettings }));
+  }, [warehouses, globalSettings]);
 
-  const [customerMix, setCustomerMix] = useState({
-    anchor: { count: 2, ordersPerMonth: 15000 },
-    midTier: { count: 8, ordersPerMonth: 5000 },
-    small: { count: 15, ordersPerMonth: 2000 }
-  });
+  // Calculate monthly P&L for a snapshot
+  const calculateMonthlyPnL = (wh, snapshot) => {
+    const laborCost = (snapshot.labor.teamLeads * snapshot.labor.teamLeadCost) +
+                     (snapshot.labor.associates * snapshot.labor.associateCost);
+    const standardOpex = Object.values(snapshot.opex).reduce((sum, v) => sum + (v || 0), 0);
+    const customOpexTotal = (snapshot.customOpex || []).reduce((sum, item) => sum + (item.amount || 0), 0);
+    const fixedOpex = standardOpex + customOpexTotal + laborCost;
 
-  const [labor, setLabor] = useState({
-    chicago: { teamLeads: 1, associates: 3 },
-    dallas: { teamLeads: 1, associates: 3 }
-  });
+    const totalStorage = wh.bins * wh.cuFtPerBin;
+    const storageRevenue = totalStorage * (snapshot.actuals.storageUtil || 0) * globalSettings.rateCard.storagePerCuFtWeek * 4.33;
 
-  const [storageUtil, setStorageUtil] = useState(0.50);
+    const revenuePerOrder = globalSettings.rateCard.orderFee +
+      (globalSettings.rateCard.pickFee * globalSettings.assumptions.avgItemsPerOrder) +
+      (globalSettings.rateCard.returnFee * globalSettings.assumptions.returnRate);
 
-  const [siteTimeline, setSiteTimeline] = useState({
-    chicago: 1,
-    dallas: 4,
-    site3: 12,
-    site4: 18,
-    site5: 24
-  });
+    const orderRevenue = (snapshot.actuals.orders || 0) * revenuePerOrder;
+    const totalRevenue = orderRevenue + storageRevenue;
+    const variableCosts = (snapshot.actuals.orders || 0) * globalSettings.assumptions.variableCostPerOrder;
+    const totalCosts = fixedOpex + variableCosts;
+    const netMargin = totalRevenue - totalCosts;
 
-  // Calculations
+    const totalCustomers = (snapshot.customers.anchor || 0) + (snapshot.customers.midTier || 0) + (snapshot.customers.small || 0);
+
+    return {
+      laborCost,
+      standardOpex,
+      customOpexTotal,
+      fixedOpex,
+      storageRevenue,
+      orderRevenue,
+      totalRevenue,
+      variableCosts,
+      totalCosts,
+      netMargin,
+      totalCustomers,
+      orders: snapshot.actuals.orders || 0
+    };
+  };
+
+  // Portfolio calculations
   const calculations = useMemo(() => {
-    const revenuePerOrder = rateCard.orderFee + (rateCard.pickFee * assumptions.avgItemsPerOrder) + (rateCard.returnFee * assumptions.returnRate);
-    const marginPerOrder = revenuePerOrder - assumptions.variableCostPerOrder;
+    const warehouseCalcs = {};
+    let totalCapexSpent = 0;
 
-    const siteCalcs = {};
-    Object.keys(sites).forEach(key => {
-      const site = sites[key];
-      const capex = defaultCapex[key];
-      const opex = defaultOpex[key];
-      const laborData = labor[key] || { teamLeads: 1, associates: 3 };
+    warehouses.forEach(wh => {
+      const standardCapex = Object.values(wh.capex).reduce((sum, v) => sum + (v || 0), 0);
+      const customCapexTotal = (wh.customCapex || []).reduce((sum, item) => sum + (item.amount || 0), 0);
+      const totalCapex = standardCapex + customCapexTotal;
 
-      const totalCapex = capex.phase1 + capex.phase2;
-      const totalStorage = site.bins * assumptions.cuFtPerBin;
-      const storageRevenue = totalStorage * storageUtil * rateCard.storagePerCuFtWeek * 4.33;
-      const laborCost = (laborData.teamLeads * assumptions.teamLeadSalary) + (laborData.associates * assumptions.associateSalary);
-      const fixedOpex = opex.rent + opex.pio + opex.other + laborCost;
-      const gapToCover = fixedOpex - storageRevenue;
-      const breakEvenOrders = marginPerOrder > 0 ? Math.ceil(gapToCover / marginPerOrder) : 0;
-      const maxOrdersPerHour = site.ports * assumptions.ordersPerPortPerHour;
+      const capexPaid = wh.capexPaid.all
+        ? totalCapex
+        : Object.keys(wh.capexPaid).filter(k => wh.capexPaid[k]).reduce((sum, k) => sum + (wh.capex[k] || 0), 0);
+
+      if (wh.status === 'live' || wh.status === 'launching') {
+        totalCapexSpent += capexPaid;
+      }
+
+      const monthKeys = Object.keys(wh.monthlySnapshots).sort();
+      const latestMonth = monthKeys[monthKeys.length - 1];
+      const latestSnapshot = latestMonth ? wh.monthlySnapshots[latestMonth] : null;
+
+      let latestPnL = null;
+      if (latestSnapshot) {
+        latestPnL = calculateMonthlyPnL(wh, latestSnapshot);
+      }
+
+      const maxOrdersPerHour = wh.ports * wh.ordersPerPortPerHour;
       const maxOrdersPerDay = maxOrdersPerHour * 8;
-      const maxOrdersPerMonth = maxOrdersPerDay * 22;
-      const capacityUtilAtBE = breakEvenOrders / maxOrdersPerMonth;
+      const maxOrdersPerMonthPerShift = maxOrdersPerDay * 22;
 
-      siteCalcs[key] = {
+      warehouseCalcs[wh.id] = {
         totalCapex,
-        totalStorage,
-        storageRevenue,
-        laborCost,
-        fixedOpex,
-        gapToCover,
-        breakEvenOrders,
-        maxOrdersPerHour,
-        maxOrdersPerDay,
-        maxOrdersPerMonth,
-        capacityUtilAtBE
+        capexPaid,
+        capexRemaining: totalCapex - capexPaid,
+        capexProgress: totalCapex > 0 ? (capexPaid / totalCapex) * 100 : 0,
+        maxOrdersPerMonthPerShift,
+        latestMonth,
+        latestSnapshot,
+        latestPnL,
+        monthKeys
       };
     });
 
-    // Customer scenario
-    const totalCustomers = customerMix.anchor.count + customerMix.midTier.count + customerMix.small.count;
-    const totalOrders = (customerMix.anchor.count * customerMix.anchor.ordersPerMonth) +
-                       (customerMix.midTier.count * customerMix.midTier.ordersPerMonth) +
-                       (customerMix.small.count * customerMix.small.ordersPerMonth);
-    const orderRevenue = totalOrders * revenuePerOrder;
-    const storageRev = siteCalcs.chicago.storageRevenue;
-    const totalRevenue = orderRevenue + storageRev;
-    const variableCosts = totalOrders * assumptions.variableCostPerOrder;
-    const totalCosts = siteCalcs.chicago.fixedOpex + variableCosts;
-    const monthlyPnL = totalRevenue - totalCosts;
-    const monthsToPayback = monthlyPnL > 0 ? Math.ceil(siteCalcs.chicago.totalCapex / monthlyPnL) : null;
+    const totalCash = globalSettings.cash.onHand + globalSettings.cash.vcFunding;
+    const availableCash = totalCash - totalCapexSpent;
+
+    let totalMonthlyOpex = 0;
+    let totalMonthlyRevenue = 0;
+    warehouses.filter(wh => wh.status === 'live').forEach(wh => {
+      const calc = warehouseCalcs[wh.id];
+      if (calc.latestPnL) {
+        totalMonthlyOpex += calc.latestPnL.totalCosts;
+        totalMonthlyRevenue += calc.latestPnL.totalRevenue;
+      }
+    });
+
+    const monthlyBurn = totalMonthlyOpex - totalMonthlyRevenue;
+    const runway = monthlyBurn > 0 ? Math.floor(availableCash / monthlyBurn) : 999;
 
     return {
-      revenuePerOrder,
-      marginPerOrder,
-      sites: siteCalcs,
-      scenario: {
-        totalCustomers,
-        totalOrders,
-        orderRevenue,
-        storageRevenue: storageRev,
-        totalRevenue,
-        variableCosts,
-        fixedCosts: siteCalcs.chicago.fixedOpex,
-        totalCosts,
-        monthlyPnL,
-        monthsToPayback
-      }
+      warehouses: warehouseCalcs,
+      portfolio: { totalCash, totalCapexSpent, availableCash, totalMonthlyOpex, totalMonthlyRevenue, monthlyBurn, runway }
     };
-  }, [rateCard, assumptions, customerMix, labor, storageUtil]);
+  }, [warehouses, globalSettings]);
 
-  // Cash flow projection
-  const cashFlowData = useMemo(() => {
-    const data = [];
-    let runningCash = cash.onHand + cash.vcFunding;
+  // Handlers
+  const handleAddWarehouse = () => {
+    setWarehouses([...warehouses, { ...newWarehouse, id: Date.now().toString() }]);
+    setNewWarehouse(createDefaultWarehouse());
+    setShowAddModal(false);
+  };
 
-    // Chicago capex already spent
-    runningCash -= defaultCapex.chicago.phase1 + defaultCapex.chicago.phase2;
-    // Dallas PIO 50% paid
-    runningCash -= 300900;
+  const handleUpdateWarehouse = (id, updates) => {
+    setWarehouses(warehouses.map(wh => wh.id === id ? { ...wh, ...updates } : wh));
+  };
 
-    const chicagoOrderRamp = [0, 10000, 22000, 38000, 56000, 78000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000, 100000];
-    const dallasOrderRamp = [0, 0, 0, 0, 15000, 35000, 55000, 80000, 100000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000, 120000];
-
-    for (let month = 1; month <= 24; month++) {
-      const chiOrders = chicagoOrderRamp[month - 1] || 100000;
-      const dalOrders = dallasOrderRamp[month - 1] || 0;
-
-      const chiRevenue = (chiOrders * calculations.revenuePerOrder) + calculations.sites.chicago.storageRevenue;
-      const dalRevenue = dalOrders > 0 ? (dalOrders * calculations.revenuePerOrder) + calculations.sites.dallas.storageRevenue : 0;
-
-      const chiCosts = calculations.sites.chicago.fixedOpex + (chiOrders * assumptions.variableCostPerOrder);
-      const dalCosts = month >= siteTimeline.dallas ? calculations.sites.dallas.fixedOpex + (dalOrders * assumptions.variableCostPerOrder) : 0;
-
-      let capexOutflow = 0;
-      if (month === 2) capexOutflow = defaultCapex.dallas.phase1 - 300900; // Remaining Phase 1
-      if (month === 4) capexOutflow = defaultCapex.dallas.phase2; // Phase 2 at launch
-
-      const totalRevenue = chiRevenue + dalRevenue;
-      const totalCosts = chiCosts + dalCosts;
-      const netOperating = totalRevenue - totalCosts;
-      const netCashFlow = netOperating - capexOutflow;
-
-      runningCash += netCashFlow;
-
-      data.push({
-        month: `M${month}`,
-        chiOrders,
-        dalOrders,
-        totalOrders: chiOrders + dalOrders,
-        revenue: totalRevenue,
-        costs: totalCosts,
-        netOperating,
-        capex: -capexOutflow,
-        cashPosition: runningCash
-      });
+  const handleDeleteWarehouse = (id) => {
+    if (confirm('Are you sure you want to delete this warehouse?')) {
+      setWarehouses(warehouses.filter(wh => wh.id !== id));
+      if (selectedView === id) setSelectedView('overview');
     }
+  };
 
-    return data;
-  }, [calculations, assumptions, cash, siteTimeline]);
+  const handleAddMonth = (warehouseId, monthKey) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
 
-  const tabs = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'inputs', label: 'Inputs' },
-    { id: 'capacity', label: 'Capacity' },
-    { id: 'scenarios', label: 'Scenarios' },
-    { id: 'cashflow', label: 'Cash Flow' },
-    { id: 'expansion', label: 'Expansion' }
-  ];
+    const monthKeys = Object.keys(wh.monthlySnapshots).sort();
+    const prevMonth = monthKeys[monthKeys.length - 1];
+    const prevSnapshot = prevMonth ? wh.monthlySnapshots[prevMonth] : null;
 
-  const InputField = ({ label, value, onChange, prefix = '', suffix = '', step = 1, min = 0 }) => (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-gray-500">{label}</label>
+    const newSnapshot = createMonthlySnapshot(prevSnapshot ? {
+      labor: { ...prevSnapshot.labor },
+      opex: { ...prevSnapshot.opex },
+      customOpex: [...(prevSnapshot.customOpex || [])],
+      customers: { ...prevSnapshot.customers },
+      actuals: { orders: 0, revenue: 0, storageUtil: prevSnapshot.actuals.storageUtil || 0 }
+    } : {});
+
+    handleUpdateWarehouse(warehouseId, {
+      monthlySnapshots: {
+        ...wh.monthlySnapshots,
+        [monthKey]: newSnapshot
+      }
+    });
+    setSelectedMonth(monthKey);
+    setShowAddMonthModal(false);
+  };
+
+  const handleUpdateMonthSnapshot = (warehouseId, monthKey, updates) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
+
+    const currentSnapshot = wh.monthlySnapshots[monthKey] || createMonthlySnapshot();
+    const updatedSnapshot = {
+      ...currentSnapshot,
+      ...updates,
+      labor: updates.labor ? { ...currentSnapshot.labor, ...updates.labor } : currentSnapshot.labor,
+      opex: updates.opex ? { ...currentSnapshot.opex, ...updates.opex } : currentSnapshot.opex,
+      customOpex: updates.customOpex !== undefined ? updates.customOpex : currentSnapshot.customOpex,
+      customers: updates.customers ? { ...currentSnapshot.customers, ...updates.customers } : currentSnapshot.customers,
+      actuals: updates.actuals ? { ...currentSnapshot.actuals, ...updates.actuals } : currentSnapshot.actuals
+    };
+
+    handleUpdateWarehouse(warehouseId, {
+      monthlySnapshots: {
+        ...wh.monthlySnapshots,
+        [monthKey]: updatedSnapshot
+      }
+    });
+  };
+
+  const handleAddCustomOpex = (warehouseId, monthKey) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
+    const snapshot = wh.monthlySnapshots[monthKey];
+    if (!snapshot) return;
+
+    const newCustomOpex = [...(snapshot.customOpex || []), { id: Date.now(), name: '', amount: 0 }];
+    handleUpdateMonthSnapshot(warehouseId, monthKey, { customOpex: newCustomOpex });
+  };
+
+  const handleUpdateCustomOpex = (warehouseId, monthKey, itemId, field, value) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
+    const snapshot = wh.monthlySnapshots[monthKey];
+    if (!snapshot) return;
+
+    const updatedCustomOpex = (snapshot.customOpex || []).map(item =>
+      item.id === itemId ? { ...item, [field]: value } : item
+    );
+    handleUpdateMonthSnapshot(warehouseId, monthKey, { customOpex: updatedCustomOpex });
+  };
+
+  const handleRemoveCustomOpex = (warehouseId, monthKey, itemId) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
+    const snapshot = wh.monthlySnapshots[monthKey];
+    if (!snapshot) return;
+
+    const updatedCustomOpex = (snapshot.customOpex || []).filter(item => item.id !== itemId);
+    handleUpdateMonthSnapshot(warehouseId, monthKey, { customOpex: updatedCustomOpex });
+  };
+
+  const handleAddCustomCapex = (warehouseId) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
+
+    const newCustomCapex = [...(wh.customCapex || []), { id: Date.now(), name: '', amount: 0 }];
+    handleUpdateWarehouse(warehouseId, { customCapex: newCustomCapex });
+  };
+
+  const handleUpdateCustomCapex = (warehouseId, itemId, field, value) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
+
+    const updatedCustomCapex = (wh.customCapex || []).map(item =>
+      item.id === itemId ? { ...item, [field]: value } : item
+    );
+    handleUpdateWarehouse(warehouseId, { customCapex: updatedCustomCapex });
+  };
+
+  const handleRemoveCustomCapex = (warehouseId, itemId) => {
+    const wh = warehouses.find(w => w.id === warehouseId);
+    if (!wh) return;
+
+    const updatedCustomCapex = (wh.customCapex || []).filter(item => item.id !== itemId);
+    handleUpdateWarehouse(warehouseId, { customCapex: updatedCustomCapex });
+  };
+
+  const selectedWarehouse = warehouses.find(wh => wh.id === selectedView);
+
+  // Input component with select-all on focus
+  const InputField = ({ label, value, onChange, prefix = '', suffix = '', step = 1, min = 0, type = 'number', className = '' }) => (
+    <div className={`flex flex-col gap-1 ${className}`}>
+      {label && <label className="text-xs text-gray-500">{label}</label>}
       <div className="flex items-center gap-1">
         {prefix && <span className="text-gray-400 text-sm">{prefix}</span>}
         <input
-          type="number"
+          type={type}
           value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          onChange={(e) => onChange(type === 'number' ? (parseFloat(e.target.value) || 0) : e.target.value)}
+          onFocus={(e) => e.target.select()}
           step={step}
           min={min}
-          className="w-full px-2 py-1 border rounded text-sm bg-blue-50 text-blue-700 font-medium"
+          className="w-full px-2 py-1.5 border rounded text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         />
         {suffix && <span className="text-gray-400 text-sm">{suffix}</span>}
       </div>
     </div>
   );
 
-  const StatCard = ({ title, value, subtitle, trend }) => (
-    <div className="bg-white rounded-lg p-4 shadow-sm border">
-      <div className="text-xs text-gray-500 uppercase tracking-wide">{title}</div>
-      <div className={`text-2xl font-bold mt-1 ${trend === 'negative' ? 'text-red-600' : trend === 'positive' ? 'text-green-600' : 'text-gray-900'}`}>
-        {value}
+  // Get next available month
+  const getNextMonth = (wh) => {
+    const monthKeys = Object.keys(wh.monthlySnapshots).sort();
+    if (monthKeys.length === 0) {
+      return getMonthKey(new Date());
+    }
+    const lastMonth = monthKeys[monthKeys.length - 1];
+    const [year, month] = lastMonth.split('-').map(Number);
+    const nextDate = new Date(year, month, 1);
+    return getMonthKey(nextDate);
+  };
+
+  // Monthly Progress Timeline (vertical scroll)
+  const renderMonthlyProgress = (wh) => {
+    const calc = calculations.warehouses[wh.id];
+    const monthKeys = calc.monthKeys || [];
+
+    return (
+      <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Monthly Progress</h2>
+          <button
+            onClick={() => setShowAddMonthModal(true)}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+          >
+            + Add Month
+          </button>
+        </div>
+
+        {monthKeys.length === 0 ? (
+          <div className="text-center py-8 text-gray-400">
+            <div className="text-4xl mb-2">📅</div>
+            <p>No monthly data yet</p>
+            <p className="text-sm">Click "Add Month" to start tracking</p>
+          </div>
+        ) : (
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {monthKeys.map(mk => {
+              const snapshot = wh.monthlySnapshots[mk];
+              const pnl = calculateMonthlyPnL(wh, snapshot);
+              const isSelected = selectedMonth === mk;
+
+              return (
+                <div
+                  key={mk}
+                  onClick={() => setSelectedMonth(isSelected ? null : mk)}
+                  className={`p-4 rounded-lg cursor-pointer transition-all border-2 ${
+                    isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent bg-gray-50 hover:bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold">{getMonthLabel(mk)}</span>
+                    <span className={`text-sm font-medium ${pnl.netMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {formatCurrency(pnl.netMargin)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-2 text-center">
+                    <div>
+                      <div className="text-xs text-gray-500">Orders</div>
+                      <div className="text-sm font-medium">{formatNumber(pnl.orders)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Revenue</div>
+                      <div className="text-sm font-medium text-green-600">{formatCurrency(pnl.totalRevenue)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Costs</div>
+                      <div className="text-sm font-medium text-red-600">{formatCurrency(pnl.totalCosts)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Net</div>
+                      <div className={`text-sm font-medium ${pnl.netMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {formatCurrency(pnl.netMargin)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Customers</div>
+                      <div className="text-sm font-medium">{pnl.totalCustomers}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Add Month Modal */}
+        {showAddMonthModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4">
+              <h3 className="text-lg font-semibold mb-4">Add New Month</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                {monthKeys.length > 0
+                  ? `This will copy forward settings from ${getMonthLabel(monthKeys[monthKeys.length - 1])}`
+                  : 'Start tracking monthly data'
+                }
+              </p>
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setShowAddMonthModal(false)} className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button onClick={() => handleAddMonth(wh.id, getNextMonth(wh))} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  Add {getMonthLabel(getNextMonth(wh))}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-      {subtitle && <div className="text-xs text-gray-400 mt-1">{subtitle}</div>}
+    );
+  };
+
+  // Monthly Detail View
+  const renderMonthDetail = (wh, monthKey) => {
+    const snapshot = wh.monthlySnapshots[monthKey];
+    if (!snapshot) return null;
+
+    const pnl = calculateMonthlyPnL(wh, snapshot);
+
+    return (
+      <div className="space-y-4 mt-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold">{getMonthLabel(monthKey)} Details</h3>
+          <button onClick={() => setSelectedMonth(null)} className="text-sm text-blue-600 hover:text-blue-700">
+            ← Close
+          </button>
+        </div>
+
+        {/* P&L Summary - 5 cards */}
+        <div className="bg-white rounded-xl p-4 shadow-sm">
+          <h4 className="font-medium mb-3 text-sm text-gray-600">P&L Summary</h4>
+          <div className="grid grid-cols-5 gap-3">
+            <div className="bg-blue-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-blue-600">Orders</div>
+              <div className="text-lg font-bold text-blue-700">{formatNumber(pnl.orders)}</div>
+            </div>
+            <div className="bg-green-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-green-600">Revenue</div>
+              <div className="text-lg font-bold text-green-700">{formatCurrency(pnl.totalRevenue)}</div>
+            </div>
+            <div className="bg-red-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-red-600">Costs</div>
+              <div className="text-lg font-bold text-red-700">{formatCurrency(pnl.totalCosts)}</div>
+            </div>
+            <div className={`rounded-lg p-3 text-center ${pnl.netMargin >= 0 ? 'bg-emerald-50' : 'bg-orange-50'}`}>
+              <div className={`text-xs ${pnl.netMargin >= 0 ? 'text-emerald-600' : 'text-orange-600'}`}>Net</div>
+              <div className={`text-lg font-bold ${pnl.netMargin >= 0 ? 'text-emerald-700' : 'text-orange-700'}`}>
+                {formatCurrency(pnl.netMargin)}
+              </div>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-purple-600">Customers</div>
+              <div className="text-lg font-bold text-purple-700">{pnl.totalCustomers}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Actuals + Customers side by side */}
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <h4 className="font-medium mb-3 text-sm text-gray-600">Actuals</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <InputField
+                label="Orders"
+                value={snapshot.actuals.orders}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { actuals: { orders: v }})}
+                step={1000}
+              />
+              <InputField
+                label="Revenue"
+                prefix="$"
+                value={snapshot.actuals.revenue}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { actuals: { revenue: v }})}
+                step={1000}
+              />
+            </div>
+            <div className="mt-3">
+              <label className="text-xs text-gray-500">Storage Utilization</label>
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={(snapshot.actuals.storageUtil || 0) * 100}
+                  onChange={(e) => handleUpdateMonthSnapshot(wh.id, monthKey, { actuals: { storageUtil: e.target.value / 100 }})}
+                  className="flex-1"
+                />
+                <span className="text-sm font-medium w-10">{((snapshot.actuals.storageUtil || 0) * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <h4 className="font-medium mb-3 text-sm text-gray-600">Customers</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <InputField
+                label="Anchor (25K+)"
+                value={snapshot.customers.anchor}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { customers: { anchor: v }})}
+              />
+              <InputField
+                label="Mid (10-25K)"
+                value={snapshot.customers.midTier}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { customers: { midTier: v }})}
+              />
+              <InputField
+                label="Small (0-10K)"
+                value={snapshot.customers.small}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { customers: { small: v }})}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Labor + OpEx side by side */}
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <h4 className="font-medium mb-3 text-sm text-gray-600">Labor</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <InputField
+                label="Team Leads"
+                value={snapshot.labor.teamLeads}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { labor: { teamLeads: v }})}
+              />
+              <InputField
+                label="TL Cost/mo"
+                prefix="$"
+                value={snapshot.labor.teamLeadCost}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { labor: { teamLeadCost: v }})}
+              />
+              <InputField
+                label="Associates"
+                value={snapshot.labor.associates}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { labor: { associates: v }})}
+              />
+              <InputField
+                label="Assoc Cost/mo"
+                prefix="$"
+                value={snapshot.labor.associateCost}
+                onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { labor: { associateCost: v }})}
+              />
+            </div>
+            <div className="mt-3 pt-3 border-t text-sm text-gray-500">
+              Total Labor: <span className="font-medium text-gray-900">{formatCurrency(pnl.laborCost)}</span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <h4 className="font-medium mb-3 text-sm text-gray-600">Monthly OpEx</h4>
+            <div className="grid grid-cols-3 gap-2">
+              <InputField label="Rent" prefix="$" value={snapshot.opex.rent} onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { opex: { rent: v }})} />
+              <InputField label="PIO" prefix="$" value={snapshot.opex.pio} onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { opex: { pio: v }})} />
+              <InputField label="Energy" prefix="$" value={snapshot.opex.energy} onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { opex: { energy: v }})} />
+              <InputField label="Gas" prefix="$" value={snapshot.opex.gas} onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { opex: { gas: v }})} />
+              <InputField label="Internet" prefix="$" value={snapshot.opex.internet} onChange={(v) => handleUpdateMonthSnapshot(wh.id, monthKey, { opex: { internet: v }})} />
+              <InputField label="Other" prefix="$" value={
+                (snapshot.opex.trash || 0) + (snapshot.opex.security || 0) + (snapshot.opex.hvac || 0) +
+                (snapshot.opex.repairs || 0) + (snapshot.opex.officeCleaning || 0) + (snapshot.opex.drinksSnacks || 0) +
+                (snapshot.opex.cleaningSupplies || 0) + (snapshot.opex.toiletries || 0) + (snapshot.opex.officeSupplies || 0) +
+                (snapshot.opex.equipmentReplacement || 0)
+              } onChange={() => {}} />
+            </div>
+
+            {/* Custom OpEx */}
+            <div className="mt-3 pt-3 border-t">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-gray-500">Custom Expenses</span>
+                <button
+                  onClick={() => handleAddCustomOpex(wh.id, monthKey)}
+                  className="text-xs text-blue-600 hover:text-blue-700"
+                >
+                  + Add
+                </button>
+              </div>
+              {(snapshot.customOpex || []).map(item => (
+                <div key={item.id} className="flex items-center gap-2 mb-2">
+                  <input
+                    type="text"
+                    placeholder="Name"
+                    value={item.name}
+                    onChange={(e) => handleUpdateCustomOpex(wh.id, monthKey, item.id, 'name', e.target.value)}
+                    className="flex-1 px-2 py-1 border rounded text-sm"
+                  />
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-400 text-sm">$</span>
+                    <input
+                      type="number"
+                      value={item.amount}
+                      onChange={(e) => handleUpdateCustomOpex(wh.id, monthKey, item.id, 'amount', parseFloat(e.target.value) || 0)}
+                      onFocus={(e) => e.target.select()}
+                      className="w-20 px-2 py-1 border rounded text-sm"
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleRemoveCustomOpex(wh.id, monthKey, item.id)}
+                    className="text-red-500 hover:text-red-700 text-sm"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 pt-3 border-t text-sm text-gray-500">
+              Total OpEx: <span className="font-medium text-gray-900">{formatCurrency(pnl.standardOpex + pnl.customOpexTotal)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Site Detail View
+  const renderSiteDetail = (wh) => {
+    const calc = calculations.warehouses[wh.id];
+    const daysUntilLaunch = getDaysUntil(wh.goLiveDate);
+
+    return (
+      <div className="space-y-4">
+        {/* Header */}
+        <div className="bg-white rounded-xl p-6 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold">{wh.name}</h1>
+                <StatusBadge status={wh.status} />
+              </div>
+              <p className="text-gray-500 mt-1">{wh.location || 'Location not set'}</p>
+            </div>
+            <div className="text-right">
+              {wh.status === 'launching' && daysUntilLaunch !== null && (
+                <div>
+                  <div className="text-3xl font-bold text-blue-600">{daysUntilLaunch}</div>
+                  <div className="text-sm text-gray-500">days until launch</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Stats */}
+          <div className="grid grid-cols-4 gap-4 mt-6">
+            <div className="bg-gray-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-gray-500">Sq Ft</div>
+              <div className="text-lg font-semibold">{formatNumber(wh.sqft)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-gray-500">Bins</div>
+              <div className="text-lg font-semibold">{formatNumber(wh.bins)}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-gray-500">Ports</div>
+              <div className="text-lg font-semibold">{wh.ports}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 text-center">
+              <div className="text-xs text-gray-500">Max Orders/Mo/Shift</div>
+              <div className="text-lg font-semibold">{formatNumber(calc.maxOrdersPerMonthPerShift)}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* CapEx Card */}
+        <CollapsibleSection
+          title="CapEx"
+          defaultOpen={wh.status === 'launching'}
+          rightContent={
+            <div className="flex items-center gap-4">
+              <div>
+                <div className="text-sm text-gray-500">Total</div>
+                <div className="text-xl font-bold">{formatCurrency(calc.totalCapex)}</div>
+              </div>
+              <div className="w-32">
+                <div className="text-xs text-gray-500 mb-1">{calc.capexProgress.toFixed(0)}% Paid</div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full ${calc.capexProgress >= 100 ? 'bg-green-500' : 'bg-blue-500'}`}
+                    style={{ width: `${calc.capexProgress}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          }
+        >
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-sm font-medium text-gray-700 mb-2">Phase 1 - Real Estate & Permits</h3>
+              <div className="space-y-1 text-sm">
+                {[
+                  ['Security Deposit', 'securityDeposit'],
+                  ['Fire Pre-Survey', 'firePreSurvey'],
+                  ['PIO 50%', 'pio50_1'],
+                  ['Install 50%', 'install50_1'],
+                  ['Fire Permitting', 'firePermitting'],
+                  ['Electrical Design', 'electricalDesign'],
+                  ['Electrical Permit', 'electricalPermit'],
+                  ['Seismic/Structural', 'seismic']
+                ].map(([label, key]) => (
+                  <div key={key} className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="text-gray-600">{label}</span>
+                    <span className="font-medium">{formatCurrency(wh.capex[key] || 0)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-700 mb-2">Phase 2 - Operational</h3>
+              <div className="space-y-1 text-sm">
+                {[
+                  ['PIO 50%', 'pio50_2'],
+                  ['Install 50%', 'install50_2'],
+                  ['PIO Shipping', 'pioShipping'],
+                  ['PIO Tariffs', 'pioTariffs'],
+                  ['Autobagger', 'autobagger'],
+                  ['Conveyors', 'conveyors'],
+                  ['Equipment', 'warehouseEquipment']
+                ].map(([label, key]) => (
+                  <div key={key} className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="text-gray-600">{label}</span>
+                    <span className="font-medium">{formatCurrency(wh.capex[key] || 0)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Custom CapEx */}
+          <div className="mt-4 pt-4 border-t">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-700">Additional CapEx</span>
+              <button onClick={() => handleAddCustomCapex(wh.id)} className="text-sm text-blue-600 hover:text-blue-700">
+                + Add Item
+              </button>
+            </div>
+            {(wh.customCapex || []).map(item => (
+              <div key={item.id} className="flex items-center gap-2 mb-2">
+                <input
+                  type="text"
+                  placeholder="Name"
+                  value={item.name}
+                  onChange={(e) => handleUpdateCustomCapex(wh.id, item.id, 'name', e.target.value)}
+                  className="flex-1 px-2 py-1 border rounded text-sm"
+                />
+                <div className="flex items-center gap-1">
+                  <span className="text-gray-400 text-sm">$</span>
+                  <input
+                    type="number"
+                    value={item.amount}
+                    onChange={(e) => handleUpdateCustomCapex(wh.id, item.id, 'amount', parseFloat(e.target.value) || 0)}
+                    onFocus={(e) => e.target.select()}
+                    className="w-24 px-2 py-1 border rounded text-sm"
+                  />
+                </div>
+                <button onClick={() => handleRemoveCustomCapex(wh.id, item.id)} className="text-red-500 hover:text-red-700">×</button>
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
+
+        {/* Monthly Progress (for Live warehouses) */}
+        {wh.status === 'live' && (
+          <>
+            {renderMonthlyProgress(wh)}
+            {selectedMonth && renderMonthDetail(wh, selectedMonth)}
+          </>
+        )}
+
+        {/* Delete button */}
+        <div className="flex justify-end pt-4">
+          <button
+            onClick={() => handleDeleteWarehouse(wh.id)}
+            className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm"
+          >
+            Delete Warehouse
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Overview
+  const renderOverview = () => (
+    <div className="space-y-6">
+      <div className="grid md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl p-4 shadow-sm">
+          <div className="text-sm text-gray-500">Available Cash</div>
+          <div className="text-2xl font-bold text-green-600">{formatCurrency(calculations.portfolio.availableCash)}</div>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm">
+          <div className="text-sm text-gray-500">Monthly Burn</div>
+          <div className="text-2xl font-bold text-red-600">{formatCurrency(Math.max(0, calculations.portfolio.monthlyBurn))}</div>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm">
+          <div className="text-sm text-gray-500">Runway</div>
+          <div className={`text-2xl font-bold ${calculations.portfolio.runway > 18 ? 'text-green-600' : calculations.portfolio.runway > 12 ? 'text-yellow-600' : 'text-red-600'}`}>
+            {calculations.portfolio.runway > 100 ? '100+' : calculations.portfolio.runway} months
+          </div>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm">
+          <div className="text-sm text-gray-500">CapEx Deployed</div>
+          <div className="text-2xl font-bold">{formatCurrency(calculations.portfolio.totalCapexSpent)}</div>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold mb-4">Warehouses</h2>
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {warehouses.map(wh => {
+            const calc = calculations.warehouses[wh.id];
+            const daysUntilLaunch = getDaysUntil(wh.goLiveDate);
+
+            return (
+              <div
+                key={wh.id}
+                onClick={() => setSelectedView(wh.id)}
+                className="bg-white rounded-xl p-4 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="font-semibold">{wh.name}</h3>
+                    <p className="text-sm text-gray-500">{wh.location || 'Location TBD'}</p>
+                  </div>
+                  <StatusBadge status={wh.status} />
+                </div>
+
+                {wh.status === 'live' && calc.latestPnL && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Latest</span>
+                      <span className="font-medium">{calc.latestMonth ? getMonthLabel(calc.latestMonth) : '-'}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Orders</span>
+                      <span className="font-medium">{formatNumber(calc.latestPnL.orders)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Net</span>
+                      <span className={`font-medium ${calc.latestPnL.netMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {formatCurrency(calc.latestPnL.netMargin)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {wh.status === 'launching' && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Launch</span>
+                      <span className="font-medium text-blue-600">{daysUntilLaunch} days</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">CapEx</span>
+                      <span className="font-medium">{calc.capexProgress.toFixed(0)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${calc.capexProgress}%` }} />
+                    </div>
+                  </div>
+                )}
+
+                {wh.status === 'planning' && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Est. CapEx</span>
+                      <span className="font-medium">{formatCurrency(calc.totalCapex)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl p-6 shadow-sm">
+        <h2 className="text-lg font-semibold mb-4">Cash Position</h2>
+        <div className="grid md:grid-cols-2 gap-4">
+          <InputField
+            label="Cash on Hand"
+            prefix="$"
+            value={globalSettings.cash.onHand}
+            onChange={(v) => setGlobalSettings({...globalSettings, cash: {...globalSettings.cash, onHand: v}})}
+            step={100000}
+          />
+          <InputField
+            label="VC Funding"
+            prefix="$"
+            value={globalSettings.cash.vcFunding}
+            onChange={(v) => setGlobalSettings({...globalSettings, cash: {...globalSettings.cash, vcFunding: v}})}
+            step={100000}
+          />
+        </div>
+      </div>
+    </div>
+  );
+
+  // Add Warehouse Modal
+  const renderAddModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b">
+          <h2 className="text-xl font-bold">Add New Warehouse</h2>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid md:grid-cols-2 gap-4">
+            <InputField label="Warehouse Name" value={newWarehouse.name} onChange={(v) => setNewWarehouse({...newWarehouse, name: v})} type="text" />
+            <InputField label="Location" value={newWarehouse.location} onChange={(v) => setNewWarehouse({...newWarehouse, location: v})} type="text" />
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-gray-500">Status</label>
+              <select
+                value={newWarehouse.status}
+                onChange={(e) => setNewWarehouse({...newWarehouse, status: e.target.value})}
+                className="w-full px-2 py-1.5 border rounded text-sm bg-white mt-1"
+              >
+                <option value="planning">Planning</option>
+                <option value="launching">Launching</option>
+                <option value="live">Live</option>
+              </select>
+            </div>
+            <InputField label="Go-Live Date" value={newWarehouse.goLiveDate} onChange={(v) => setNewWarehouse({...newWarehouse, goLiveDate: v})} type="date" />
+          </div>
+          <div className="grid md:grid-cols-4 gap-4">
+            <InputField label="Sq Ft" value={newWarehouse.sqft} onChange={(v) => setNewWarehouse({...newWarehouse, sqft: v})} step={1000} />
+            <InputField label="Bins" value={newWarehouse.bins} onChange={(v) => setNewWarehouse({...newWarehouse, bins: v})} step={1000} />
+            <InputField label="Ports" value={newWarehouse.ports} onChange={(v) => setNewWarehouse({...newWarehouse, ports: v})} />
+            <InputField label="Orders/Port/Hr" value={newWarehouse.ordersPerPortPerHour} onChange={(v) => setNewWarehouse({...newWarehouse, ordersPerPortPerHour: v})} step={25} />
+          </div>
+        </div>
+        <div className="p-6 border-t flex justify-end gap-3">
+          <button onClick={() => setShowAddModal(false)} className="px-4 py-2 border rounded-lg hover:bg-gray-50">Cancel</button>
+          <button onClick={handleAddWarehouse} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Add Warehouse</button>
+        </div>
+      </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">Warehouse P&L & Scenario Planner</h1>
-          <p className="text-gray-500 text-sm">Multi-site 3PL financial model</p>
+    <div className="min-h-screen bg-gray-100 flex">
+      {/* Sidebar */}
+      <div className="w-64 bg-gray-900 text-white flex flex-col fixed h-full">
+        <div className="p-4 border-b border-gray-800">
+          <h1 className="font-bold text-lg">Warehouse Dashboard</h1>
+          <p className="text-gray-400 text-xs mt-1">Multi-site P&L Tracker</p>
         </div>
 
-        <div className="flex gap-2 mb-4 overflow-x-auto">
-          {tabs.map(tab => (
+        <nav className="flex-1 p-4 overflow-y-auto">
+          <div className="mb-6">
+            <div className="text-xs text-gray-500 uppercase tracking-wide mb-2">Portfolio</div>
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap transition-colors ${
-                activeTab === tab.id
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              onClick={() => { setSelectedView('overview'); setSelectedMonth(null); }}
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                selectedView === 'overview' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800'
               }`}
             >
-              {tab.label}
+              Overview
             </button>
-          ))}
+          </div>
+
+          <div className="mb-6">
+            <div className="text-xs text-gray-500 uppercase tracking-wide mb-2">Warehouses</div>
+            <div className="space-y-1">
+              {warehouses.map(wh => (
+                <button
+                  key={wh.id}
+                  onClick={() => { setSelectedView(wh.id); setSelectedMonth(null); }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
+                    selectedView === wh.id ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  <span>{wh.name}</span>
+                  <span className={`text-xs ${
+                    wh.status === 'live' ? 'text-green-400' :
+                    wh.status === 'launching' ? 'text-blue-400' : 'text-gray-500'
+                  }`}>
+                    {wh.status === 'live' ? '●' : wh.status === 'launching' ? '◐' : '○'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors flex items-center gap-2"
+          >
+            <span>+</span> Add Warehouse
+          </button>
+        </nav>
+
+        <div className="p-4 border-t border-gray-800 bg-gray-800">
+          <div className="text-xs text-gray-500 uppercase tracking-wide mb-2">Cash Runway</div>
+          <div className="text-xl font-bold text-green-400">{formatCurrency(calculations.portfolio.availableCash)}</div>
+          <div className="text-sm text-gray-400 mt-1">
+            {calculations.portfolio.runway > 100 ? '100+' : calculations.portfolio.runway} months runway
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-1.5 mt-2">
+            <div
+              className={`h-1.5 rounded-full ${
+                calculations.portfolio.runway > 18 ? 'bg-green-500' :
+                calculations.portfolio.runway > 12 ? 'bg-yellow-500' : 'bg-red-500'
+              }`}
+              style={{ width: `${Math.min(100, (calculations.portfolio.runway / 36) * 100)}%` }}
+            />
+          </div>
         </div>
-
-        {activeTab === 'overview' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatCard title="Total Capital" value={formatCurrency(cash.onHand + cash.vcFunding)} subtitle="Cash + VC" />
-              <StatCard title="Chicago Break-Even" value={formatNumber(calculations.sites.chicago.breakEvenOrders)} subtitle="orders/month" />
-              <StatCard title="Dallas Break-Even" value={formatNumber(calculations.sites.dallas.breakEvenOrders)} subtitle="orders/month" />
-              <StatCard title="Margin/Order" value={`$${calculations.marginPerOrder.toFixed(2)}`} subtitle="after variable costs" />
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Site Status</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2 px-2">Site</th>
-                      <th className="text-right py-2 px-2">CapEx</th>
-                      <th className="text-right py-2 px-2">Monthly OpEx</th>
-                      <th className="text-right py-2 px-2">Break-Even</th>
-                      <th className="text-right py-2 px-2">Max Capacity</th>
-                      <th className="text-left py-2 px-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(sites).map(([key, site]) => (
-                      <tr key={key} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-2 font-medium">{site.name}</td>
-                        <td className="py-2 px-2 text-right">{formatCurrency(calculations.sites[key].totalCapex)}</td>
-                        <td className="py-2 px-2 text-right">{formatCurrency(calculations.sites[key].fixedOpex)}</td>
-                        <td className="py-2 px-2 text-right">{formatNumber(calculations.sites[key].breakEvenOrders)}</td>
-                        <td className="py-2 px-2 text-right">{formatNumber(calculations.sites[key].maxOrdersPerMonth)}</td>
-                        <td className="py-2 px-2">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${
-                            site.status === 'live' ? 'bg-green-100 text-green-700' :
-                            site.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}>
-                            {site.status === 'live' ? 'Live' : site.status === 'in_progress' ? 'Apr/May 2026' : 'Planning'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">24-Month Cash Position</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <ComposedChart data={cashFlowData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={(v) => `$${(v/1000000).toFixed(1)}M`} tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => formatCurrency(v)} />
-                  <Area type="monotone" dataKey="cashPosition" fill="#10B981" fillOpacity={0.2} stroke="#10B981" strokeWidth={2} name="Cash Position" />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'inputs' && (
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Rate Card</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <InputField label="Order Fee" prefix="$" value={rateCard.orderFee} onChange={(v) => setRateCard({...rateCard, orderFee: v})} step={0.05} />
-                <InputField label="Pick Fee (per item)" prefix="$" value={rateCard.pickFee} onChange={(v) => setRateCard({...rateCard, pickFee: v})} step={0.05} />
-                <InputField label="Storage (per cu ft/week)" prefix="$" value={rateCard.storagePerCuFtWeek} onChange={(v) => setRateCard({...rateCard, storagePerCuFtWeek: v})} step={0.01} />
-                <InputField label="Return Fee" prefix="$" value={rateCard.returnFee} onChange={(v) => setRateCard({...rateCard, returnFee: v})} step={0.25} />
-                <InputField label="Inbound Fee (per carton)" prefix="$" value={rateCard.inboundFee} onChange={(v) => setRateCard({...rateCard, inboundFee: v})} step={0.25} />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Order Assumptions</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <InputField label="Avg Items per Order" value={assumptions.avgItemsPerOrder} onChange={(v) => setAssumptions({...assumptions, avgItemsPerOrder: v})} step={0.5} />
-                <InputField label="Return Rate" suffix="%" value={assumptions.returnRate * 100} onChange={(v) => setAssumptions({...assumptions, returnRate: v / 100})} step={1} />
-                <InputField label="Variable Cost per Order" prefix="$" value={assumptions.variableCostPerOrder} onChange={(v) => setAssumptions({...assumptions, variableCostPerOrder: v})} step={0.01} />
-                <InputField label="Peak Surge Multiplier" suffix="x" value={assumptions.peakSurgeMultiplier} onChange={(v) => setAssumptions({...assumptions, peakSurgeMultiplier: v})} step={0.25} />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Labor Costs</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <InputField label="Team Lead (monthly)" prefix="$" value={assumptions.teamLeadSalary} onChange={(v) => setAssumptions({...assumptions, teamLeadSalary: v})} step={100} />
-                <InputField label="Associate (monthly)" prefix="$" value={assumptions.associateSalary} onChange={(v) => setAssumptions({...assumptions, associateSalary: v})} step={100} />
-              </div>
-              <div className="mt-4 pt-4 border-t">
-                <h4 className="text-sm font-medium mb-2">Chicago Labor</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <InputField label="Team Leads" value={labor.chicago?.teamLeads || 1} onChange={(v) => setLabor({...labor, chicago: {...labor.chicago, teamLeads: v}})} />
-                  <InputField label="Associates" value={labor.chicago?.associates || 3} onChange={(v) => setLabor({...labor, chicago: {...labor.chicago, associates: v}})} />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Cash Position</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <InputField label="Cash on Hand" prefix="$" value={cash.onHand} onChange={(v) => setCash({...cash, onHand: v})} step={100000} />
-                <InputField label="VC Funding (Incoming)" prefix="$" value={cash.vcFunding} onChange={(v) => setCash({...cash, vcFunding: v})} step={100000} />
-              </div>
-              <div className="mt-4 p-3 bg-green-50 rounded">
-                <div className="text-sm text-green-600">Total Capital</div>
-                <div className="text-xl font-bold text-green-700">{formatCurrency(cash.onHand + cash.vcFunding)}</div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm md:col-span-2">
-              <h3 className="font-semibold mb-4">Calculated Unit Economics</h3>
-              <div className="grid grid-cols-4 gap-4">
-                <div className="p-3 bg-gray-50 rounded">
-                  <div className="text-xs text-gray-500">Revenue per Order</div>
-                  <div className="text-lg font-bold">${calculations.revenuePerOrder.toFixed(2)}</div>
-                </div>
-                <div className="p-3 bg-gray-50 rounded">
-                  <div className="text-xs text-gray-500">Variable Cost per Order</div>
-                  <div className="text-lg font-bold">${assumptions.variableCostPerOrder.toFixed(2)}</div>
-                </div>
-                <div className="p-3 bg-gray-50 rounded">
-                  <div className="text-xs text-gray-500">Margin per Order</div>
-                  <div className="text-lg font-bold text-green-600">${calculations.marginPerOrder.toFixed(2)}</div>
-                </div>
-                <div className="p-3 bg-gray-50 rounded">
-                  <div className="text-xs text-gray-500">Storage Rev (50% util)</div>
-                  <div className="text-lg font-bold">{formatCurrency(calculations.sites.chicago.storageRevenue)}/mo</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'capacity' && (
-          <div className="space-y-4">
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold">Storage Utilization</h3>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    min="10"
-                    max="100"
-                    value={storageUtil * 100}
-                    onChange={(e) => setStorageUtil(e.target.value / 100)}
-                    className="w-32"
-                  />
-                  <span className="text-sm font-medium w-12">{(storageUtil * 100).toFixed(0)}%</span>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-gray-50">
-                      <th className="text-left py-2 px-2">Metric</th>
-                      {Object.values(sites).map(site => (
-                        <th key={site.name} className="text-right py-2 px-2">{site.name}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Ports</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{sites[key].ports}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Bins</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatNumber(sites[key].bins)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Storage (cu ft)</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatNumber(Math.round(calculations.sites[key].totalStorage))}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Max Orders/Hour</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatNumber(calculations.sites[key].maxOrdersPerHour)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Max Orders/Day (8hr)</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatNumber(calculations.sites[key].maxOrdersPerDay)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Max Orders/Month</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatNumber(calculations.sites[key].maxOrdersPerMonth)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b bg-blue-50">
-                      <td className="py-2 px-2 font-medium">Storage Revenue</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right font-medium">{formatCurrency(calculations.sites[key].storageRevenue)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Fixed + Labor OpEx</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatCurrency(calculations.sites[key].fixedOpex)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Gap to Cover</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatCurrency(calculations.sites[key].gapToCover)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b bg-green-50">
-                      <td className="py-2 px-2 font-bold">Break-Even Orders/Month</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right font-bold text-green-700">{formatNumber(calculations.sites[key].breakEvenOrders)}</td>
-                      ))}
-                    </tr>
-                    <tr className="border-b">
-                      <td className="py-2 px-2">Break-Even Orders/Day</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{formatNumber(Math.ceil(calculations.sites[key].breakEvenOrders / 22))}</td>
-                      ))}
-                    </tr>
-                    <tr>
-                      <td className="py-2 px-2">Capacity Util at BE</td>
-                      {Object.keys(sites).map(key => (
-                        <td key={key} className="py-2 px-2 text-right">{(calculations.sites[key].capacityUtilAtBE * 100).toFixed(1)}%</td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'scenarios' && (
-          <div className="space-y-4">
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold mb-4">Customer Mix (Chicago)</h3>
-
-                <div className="space-y-4">
-                  <div className="p-3 border rounded">
-                    <div className="text-sm font-medium text-gray-700 mb-2">Anchor Customers (Large)</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <InputField label="# of Customers" value={customerMix.anchor.count} onChange={(v) => setCustomerMix({...customerMix, anchor: {...customerMix.anchor, count: v}})} />
-                      <InputField label="Orders/Month Each" value={customerMix.anchor.ordersPerMonth} onChange={(v) => setCustomerMix({...customerMix, anchor: {...customerMix.anchor, ordersPerMonth: v}})} step={1000} />
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">Subtotal: {formatNumber(customerMix.anchor.count * customerMix.anchor.ordersPerMonth)} orders/mo</div>
-                  </div>
-
-                  <div className="p-3 border rounded">
-                    <div className="text-sm font-medium text-gray-700 mb-2">Mid-Tier Customers</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <InputField label="# of Customers" value={customerMix.midTier.count} onChange={(v) => setCustomerMix({...customerMix, midTier: {...customerMix.midTier, count: v}})} />
-                      <InputField label="Orders/Month Each" value={customerMix.midTier.ordersPerMonth} onChange={(v) => setCustomerMix({...customerMix, midTier: {...customerMix.midTier, ordersPerMonth: v}})} step={500} />
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">Subtotal: {formatNumber(customerMix.midTier.count * customerMix.midTier.ordersPerMonth)} orders/mo</div>
-                  </div>
-
-                  <div className="p-3 border rounded">
-                    <div className="text-sm font-medium text-gray-700 mb-2">Small Customers</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <InputField label="# of Customers" value={customerMix.small.count} onChange={(v) => setCustomerMix({...customerMix, small: {...customerMix.small, count: v}})} />
-                      <InputField label="Orders/Month Each" value={customerMix.small.ordersPerMonth} onChange={(v) => setCustomerMix({...customerMix, small: {...customerMix.small, ordersPerMonth: v}})} step={250} />
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">Subtotal: {formatNumber(customerMix.small.count * customerMix.small.ordersPerMonth)} orders/mo</div>
-                  </div>
-                </div>
-
-                <div className="mt-4 p-3 bg-gray-100 rounded">
-                  <div className="flex justify-between">
-                    <span className="font-medium">Total Customers:</span>
-                    <span className="font-bold">{calculations.scenario.totalCustomers}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="font-medium">Total Orders/Month:</span>
-                    <span className="font-bold">{formatNumber(calculations.scenario.totalOrders)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold mb-4">Monthly P&L Projection</h3>
-
-                <div className="space-y-2">
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-gray-600">Order Revenue</span>
-                    <span className="font-medium">{formatCurrency(calculations.scenario.orderRevenue)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-gray-600">Storage Revenue ({(storageUtil*100).toFixed(0)}% util)</span>
-                    <span className="font-medium">{formatCurrency(calculations.scenario.storageRevenue)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b bg-blue-50 px-2 -mx-2">
-                    <span className="font-medium">Total Revenue</span>
-                    <span className="font-bold">{formatCurrency(calculations.scenario.totalRevenue)}</span>
-                  </div>
-
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-gray-600">Fixed + Labor Costs</span>
-                    <span className="font-medium text-red-600">({formatCurrency(calculations.scenario.fixedCosts)})</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-gray-600">Variable Costs</span>
-                    <span className="font-medium text-red-600">({formatCurrency(calculations.scenario.variableCosts)})</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b bg-red-50 px-2 -mx-2">
-                    <span className="font-medium">Total Costs</span>
-                    <span className="font-bold text-red-600">({formatCurrency(calculations.scenario.totalCosts)})</span>
-                  </div>
-
-                  <div className={`flex justify-between py-3 px-2 -mx-2 rounded ${calculations.scenario.monthlyPnL >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                    <span className="font-bold">Monthly P&L</span>
-                    <span className={`font-bold text-xl ${calculations.scenario.monthlyPnL >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                      {calculations.scenario.monthlyPnL >= 0 ? '' : '('}{formatCurrency(Math.abs(calculations.scenario.monthlyPnL))}{calculations.scenario.monthlyPnL >= 0 ? '' : ')'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-4 p-3 bg-gray-50 rounded">
-                  <div className="text-sm text-gray-600">CapEx Payback (Chicago)</div>
-                  <div className="text-lg font-bold">
-                    {calculations.scenario.monthsToPayback
-                      ? `${calculations.scenario.monthsToPayback} months`
-                      : 'N/A - Not Profitable'}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {formatCurrency(calculations.sites.chicago.totalCapex)} ÷ {formatCurrency(calculations.scenario.monthlyPnL)}/mo
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Break-Even Comparison</h3>
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="p-4 border rounded">
-                  <div className="text-3xl font-bold text-blue-600">{formatNumber(calculations.scenario.totalOrders)}</div>
-                  <div className="text-sm text-gray-500">Your Scenario</div>
-                </div>
-                <div className="text-4xl text-gray-300 flex items-center justify-center">vs</div>
-                <div className="p-4 border rounded">
-                  <div className="text-3xl font-bold text-gray-600">{formatNumber(calculations.sites.chicago.breakEvenOrders)}</div>
-                  <div className="text-sm text-gray-500">Break-Even</div>
-                </div>
-              </div>
-              <div className="mt-4">
-                <div className="text-sm text-gray-500 mb-1">Progress to Break-Even</div>
-                <div className="w-full bg-gray-200 rounded-full h-4">
-                  <div
-                    className={`h-4 rounded-full ${calculations.scenario.totalOrders >= calculations.sites.chicago.breakEvenOrders ? 'bg-green-500' : 'bg-blue-500'}`}
-                    style={{ width: `${Math.min(100, (calculations.scenario.totalOrders / calculations.sites.chicago.breakEvenOrders) * 100)}%` }}
-                  />
-                </div>
-                <div className="text-right text-sm text-gray-500 mt-1">
-                  {((calculations.scenario.totalOrders / calculations.sites.chicago.breakEvenOrders) * 100).toFixed(0)}%
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'cashflow' && (
-          <div className="space-y-4">
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">24-Month Order Ramp</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={cashFlowData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                  <YAxis tickFormatter={(v) => `${(v/1000).toFixed(0)}K`} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(v) => formatNumber(v)} />
-                  <Legend />
-                  <Bar dataKey="chiOrders" name="Chicago" fill="#3B82F6" stackId="orders" />
-                  <Bar dataKey="dalOrders" name="Dallas" fill="#10B981" stackId="orders" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Revenue vs Costs</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={cashFlowData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                  <YAxis tickFormatter={(v) => formatCurrency(v)} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(v) => formatCurrency(v)} />
-                  <Legend />
-                  <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#10B981" strokeWidth={2} />
-                  <Line type="monotone" dataKey="costs" name="Costs" stroke="#EF4444" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Cash Position</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <ComposedChart data={cashFlowData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                  <YAxis tickFormatter={(v) => `$${(v/1000000).toFixed(1)}M`} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(v) => formatCurrency(v)} />
-                  <Legend />
-                  <Bar dataKey="netOperating" name="Net Operating" fill="#3B82F6" />
-                  <Line type="monotone" dataKey="cashPosition" name="Cash Position" stroke="#10B981" strokeWidth={3} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Monthly Detail</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b bg-gray-50">
-                      <th className="py-2 px-1 text-left">Month</th>
-                      <th className="py-2 px-1 text-right">Orders</th>
-                      <th className="py-2 px-1 text-right">Revenue</th>
-                      <th className="py-2 px-1 text-right">Costs</th>
-                      <th className="py-2 px-1 text-right">Net</th>
-                      <th className="py-2 px-1 text-right">Cash</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cashFlowData.slice(0, 12).map((row, i) => (
-                      <tr key={i} className="border-b hover:bg-gray-50">
-                        <td className="py-1 px-1">{row.month}</td>
-                        <td className="py-1 px-1 text-right">{formatNumber(row.totalOrders)}</td>
-                        <td className="py-1 px-1 text-right">{formatCurrency(row.revenue)}</td>
-                        <td className="py-1 px-1 text-right text-red-600">{formatCurrency(row.costs)}</td>
-                        <td className={`py-1 px-1 text-right font-medium ${row.netOperating >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {formatCurrency(row.netOperating)}
-                        </td>
-                        <td className="py-1 px-1 text-right font-medium">{formatCurrency(row.cashPosition)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'expansion' && (
-          <div className="space-y-4">
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Site 3 Comparison: New Jersey vs Los Angeles</h3>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium text-lg mb-3">New Jersey</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between"><span>Total CapEx:</span><span className="font-medium">{formatCurrency(calculations.sites.newjersey.totalCapex)}</span></div>
-                    <div className="flex justify-between"><span>Monthly OpEx:</span><span className="font-medium">{formatCurrency(calculations.sites.newjersey.fixedOpex)}</span></div>
-                    <div className="flex justify-between"><span>Rent:</span><span className="font-medium">{formatCurrency(defaultOpex.newjersey.rent)}</span></div>
-                    <div className="flex justify-between"><span>Break-Even Orders:</span><span className="font-bold text-green-600">{formatNumber(calculations.sites.newjersey.breakEvenOrders)}</span></div>
-                  </div>
-                </div>
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium text-lg mb-3">Los Angeles</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between"><span>Total CapEx:</span><span className="font-medium">{formatCurrency(calculations.sites.losangeles.totalCapex)}</span></div>
-                    <div className="flex justify-between"><span>Monthly OpEx:</span><span className="font-medium">{formatCurrency(calculations.sites.losangeles.fixedOpex)}</span></div>
-                    <div className="flex justify-between"><span>Rent:</span><span className="font-medium">{formatCurrency(defaultOpex.losangeles.rent)}</span></div>
-                    <div className="flex justify-between"><span>Break-Even Orders:</span><span className="font-bold text-green-600">{formatNumber(calculations.sites.losangeles.breakEvenOrders)}</span></div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 p-3 bg-blue-50 rounded">
-                <div className="text-sm font-medium">Recommendation</div>
-                <div className="text-sm text-gray-600 mt-1">
-                  <strong>New Jersey</strong> has lower CapEx ({formatCurrency(calculations.sites.newjersey.totalCapex - calculations.sites.losangeles.totalCapex)} less)
-                  and lower monthly OpEx ({formatCurrency(calculations.sites.newjersey.fixedOpex - calculations.sites.losangeles.fixedOpex)} less),
-                  resulting in a lower break-even threshold.
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">All Sites Summary</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-gray-50">
-                      <th className="py-2 px-2 text-left">Site</th>
-                      <th className="py-2 px-2 text-right">Sq Ft</th>
-                      <th className="py-2 px-2 text-right">CapEx</th>
-                      <th className="py-2 px-2 text-right">Monthly OpEx</th>
-                      <th className="py-2 px-2 text-right">Break-Even</th>
-                      <th className="py-2 px-2 text-left">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(sites).map(([key, site]) => (
-                      <tr key={key} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-2 font-medium">{site.name}</td>
-                        <td className="py-2 px-2 text-right">{formatNumber(site.sqft)}</td>
-                        <td className="py-2 px-2 text-right">{formatCurrency(calculations.sites[key].totalCapex)}</td>
-                        <td className="py-2 px-2 text-right">{formatCurrency(calculations.sites[key].fixedOpex)}</td>
-                        <td className="py-2 px-2 text-right">{formatNumber(calculations.sites[key].breakEvenOrders)}</td>
-                        <td className="py-2 px-2">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${
-                            site.status === 'live' ? 'bg-green-100 text-green-700' :
-                            site.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}>
-                            {site.status === 'live' ? 'Live' : site.status === 'in_progress' ? 'In Progress' : 'Planning'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="bg-gray-100 font-bold">
-                      <td className="py-2 px-2">TOTAL (All 5)</td>
-                      <td className="py-2 px-2 text-right">{formatNumber(Object.values(sites).reduce((sum, s) => sum + s.sqft, 0))}</td>
-                      <td className="py-2 px-2 text-right">{formatCurrency(Object.keys(sites).reduce((sum, k) => sum + calculations.sites[k].totalCapex, 0))}</td>
-                      <td className="py-2 px-2 text-right">{formatCurrency(Object.keys(sites).reduce((sum, k) => sum + calculations.sites[k].fixedOpex, 0))}</td>
-                      <td className="py-2 px-2 text-right">{formatNumber(Object.keys(sites).reduce((sum, k) => sum + calculations.sites[k].breakEvenOrders, 0))}</td>
-                      <td className="py-2 px-2"></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <h3 className="font-semibold mb-4">Expansion Capital Requirement</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-3 border rounded">
-                  <div className="text-xs text-gray-500">Total Capital</div>
-                  <div className="text-lg font-bold text-green-600">{formatCurrency(cash.onHand + cash.vcFunding)}</div>
-                </div>
-                <div className="p-3 border rounded">
-                  <div className="text-xs text-gray-500">Chicago + Dallas (Committed)</div>
-                  <div className="text-lg font-bold text-red-600">{formatCurrency(calculations.sites.chicago.totalCapex + calculations.sites.dallas.totalCapex)}</div>
-                </div>
-                <div className="p-3 border rounded">
-                  <div className="text-xs text-gray-500">Remaining for Expansion</div>
-                  <div className="text-lg font-bold">{formatCurrency((cash.onHand + cash.vcFunding) - calculations.sites.chicago.totalCapex - calculations.sites.dallas.totalCapex)}</div>
-                </div>
-                <div className="p-3 border rounded">
-                  <div className="text-xs text-gray-500">Sites 3-5 CapEx Needed</div>
-                  <div className="text-lg font-bold">{formatCurrency(calculations.sites.newjersey.totalCapex + calculations.sites.losangeles.totalCapex + calculations.sites.phoenix.totalCapex)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* Main Content */}
+      <div className="flex-1 ml-64 p-6">
+        {selectedView === 'overview' ? renderOverview() : selectedWarehouse && renderSiteDetail(selectedWarehouse)}
+      </div>
+
+      {showAddModal && renderAddModal()}
     </div>
   );
 }
